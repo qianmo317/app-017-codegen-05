@@ -63,6 +63,14 @@ export default function SettingsPage() {
           />{' '}
           分页时显示盲文页码
         </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={settings.showToc}
+            onChange={(e) => update({ showToc: e.target.checked })}
+          />{' '}
+          自动插入教材可触摸目录
+        </label>
       </fieldset>
 
       <fieldset>

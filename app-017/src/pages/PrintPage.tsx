@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Doc } from '../types';
 import { convertText } from '../lib/convert';
 import { layoutDocument } from '../lib/layout';
+import { buildTocLayoutInput } from '../lib/toc';
 import { pagesToBRF, validateBRF } from '../lib/brf';
 import { pageToSVG, calibrationSVG } from '../lib/svg';
 import { svgToPngBlob, downloadBlob, downloadText } from '../lib/png';
@@ -36,11 +37,31 @@ export default function PrintPage({ id }: { id: string }) {
       confirmed: doc.confirmed,
       dictEntries: settings.dictEntries,
     });
+    const tocOptions = {
+      toneMode: settings.toneMode,
+      autoDetectPinyin: settings.autoDetectPinyin,
+      profile: doc.ruleProfile,
+      overrides: doc.overrides,
+      confirmed: doc.confirmed,
+      dictEntries: settings.dictEntries,
+    };
     return {
       conv,
-      layout: layoutDocument(conv.paragraphs, doc.setup, settings.showPageNumbers),
+      layout: layoutDocument(
+        conv.paragraphs,
+        doc.setup,
+        settings.showPageNumbers,
+        settings.showToc ? buildTocLayoutInput(conv, tocOptions) : null,
+      ),
     };
-  }, [doc, settings.toneMode, settings.autoDetectPinyin, settings.showPageNumbers, settings.dictEntries]);
+  }, [
+    doc,
+    settings.toneMode,
+    settings.autoDetectPinyin,
+    settings.showPageNumbers,
+    settings.showToc,
+    settings.dictEntries,
+  ]);
 
   const svgs = useMemo(
     () => (pages && doc ? pages.layout.pages.map((p) => pageToSVG(p, doc.setup, settings.printer)) : []),
@@ -58,6 +79,9 @@ export default function PrintPage({ id }: { id: string }) {
 
   const uncertainCount = pages.conv.uncertain.length;
   const setup = doc.setup;
+  const tocViolations = pages.layout.violations.filter(
+    (v): v is Extract<typeof v, { type: 'toc-unstable' }> => v.type === 'toc-unstable',
+  );
 
   const exportBRF = () => {
     const brf = pagesToBRF(pages.layout.pages);
@@ -119,6 +143,21 @@ export default function PrintPage({ id }: { id: string }) {
         打印提示：请务必在打印对话框选择「实际大小 / 100%」，任何缩放都会改变点距导致无法触摸阅读。
         打印后可用校准页量测：横向 10 方 ≈ {(9 * settings.printer.cellPitchMm + settings.printer.dotPitchMm).toFixed(1)}mm。
       </p>
+
+      {tocViolations.length > 0 && (
+        <div role="alert" className="no-print">
+          {tocViolations.map((v, i) => (
+            <p className="violation-item" key={i}>
+              ⚠ 目录页码未能稳定：{v.titles.map((title, ti) => (
+                <span key={title}>
+                  「{title}」在 {v.pageNumbers[ti]?.join('、')} 页之间来回跳
+                  {ti < v.titles.length - 1 ? '；' : '。'}
+                </span>
+              ))}
+            </p>
+          ))}
+        </div>
+      )}
 
       {withCalibration && (
         <div

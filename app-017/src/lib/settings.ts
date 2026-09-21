@@ -9,6 +9,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   toneMode: 'national',
   autoDetectPinyin: true,
   showPageNumbers: true,
+  showToc: true,
   highContrast: false,
   fontScale: 100,
   printer: {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BrailleCell, Doc } from '../types';
 import { convertText } from '../lib/convert';
 import { layoutDocument } from '../lib/layout';
+import { buildTocLayoutInput } from '../lib/toc';
 import { getDoc, saveDoc } from '../lib/storage';
 import { useSettings } from '../App';
 import { navigate } from '../router';
@@ -75,9 +76,13 @@ export default function EditorPage({ id }: { id: string }) {
     () => (doc ? convertText(doc.raw, convertOptions) : null),
     [doc?.raw, convertOptions],
   );
+  const tocInput = useMemo(
+    () => (converted && settings.showToc ? buildTocLayoutInput(converted, convertOptions) : null),
+    [converted, settings.showToc, convertOptions],
+  );
   const layout = useMemo(
-    () => (converted && doc ? layoutDocument(converted.paragraphs, doc.setup, settings.showPageNumbers) : null),
-    [converted, doc?.setup, settings.showPageNumbers],
+    () => (converted && doc ? layoutDocument(converted.paragraphs, doc.setup, settings.showPageNumbers, tocInput) : null),
+    [converted, doc?.setup, settings.showPageNumbers, tocInput],
   );
 
   // 预览行号反查：选中格 → 原字符
@@ -183,11 +188,22 @@ export default function EditorPage({ id }: { id: string }) {
           />
           {hasViolations && (
             <div role="alert">
-              {layout.violations.map((v, i) => (
-                <p className="violation-item" key={i}>
-                  ⚠ 词「{v.word}」长 {v.cells} 方，超过行宽 {doc.setup.cellsPerLine}，已强制拆分——请修改或加宽行宽。
-                </p>
-              ))}
+              {layout.violations.map((v, i) =>
+                v.type === 'word-too-long' ? (
+                  <p className="violation-item" key={i}>
+                    ⚠ 词「{v.word}」长 {v.cells} 方，超过行宽 {doc.setup.cellsPerLine}，已强制拆分——请修改或加宽行宽。
+                  </p>
+                ) : (
+                  <p className="violation-item" key={i}>
+                    ⚠ 目录页码未能稳定：{v.titles.map((title, ti) => (
+                      <span key={title}>
+                        「{title}」在 {v.pageNumbers[ti]?.join('、')} 页之间来回跳
+                        {ti < v.titles.length - 1 ? '；' : '。'}
+                      </span>
+                    ))}
+                  </p>
+                ),
+              )}
             </div>
           )}
         </section>
@@ -362,6 +378,14 @@ export default function EditorPage({ id }: { id: string }) {
                 onChange={(e) => update({ showPageNumbers: e.target.checked })}
               />{' '}
               显示盲文页码
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={settings.showToc}
+                onChange={(e) => update({ showToc: e.target.checked })}
+              />{' '}
+              插入教材目录
             </label>
           </div>
         </section>

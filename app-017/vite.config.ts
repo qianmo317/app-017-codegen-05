@@ -9,4 +9,7 @@ export default defineConfig({
     target: 'es2020',
     chunkSizeWarningLimit: 1200,
   },
+  test: {
+    exclude: ['e2e/**', 'node_modules/**'],
+  },
 });

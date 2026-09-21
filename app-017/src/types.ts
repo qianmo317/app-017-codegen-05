@@ -62,6 +62,8 @@ export interface AppSettings {
   toneMode: ToneMode;
   autoDetectPinyin: boolean;
   showPageNumbers: boolean;
+  /** 在教材正文前插入可触摸目录 */
+  showToc: boolean;
   highContrast: boolean;
   /** 100 / 150 / 200 */
   fontScale: number;

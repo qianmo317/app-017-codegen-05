@@ -18,6 +18,7 @@ import {
   SEC105_OMIT,
   type ParsedSyllable,
 } from './pinyin';
+import { parseHeading } from './headings';
 
 const PUNCT = punctJson.punctuation as Record<string, string[]>;
 const DIGITS = digitsJson.digits as Record<string, string>;
@@ -39,6 +40,8 @@ export interface WordCells {
 export interface ParagraphResult {
   words: WordCells[];
   blank: boolean;
+  /** 该行是教材章/节标题时的层级、目录顺序（从 0 开始）和标题文字 */
+  heading?: { level: 1 | 2; index: number; title: string };
 }
 
 export interface ConvertResult {
@@ -261,12 +264,16 @@ export function convertText(raw: string, opts: ConvertOptions): ConvertResult {
   const flat: BrailleCell[] = [];
 
   let wordId = 0;
-  for (const line of raw.split('\n')) {
+  let headingIndex = 0;
+  for (const lineRaw of raw.split('\n')) {
+    const line = lineRaw.trim();
     if (line.trim() === '') {
       paragraphs.push({ words: [], blank: true });
       continue;
     }
-    const tokens = tokenizeLine(line);
+    const headingInfo = parseHeading(lineRaw);
+    const effectiveLine = headingInfo && /^#{1,6}\s+/.test(line) ? headingInfo.title : line;
+    const tokens = tokenizeLine(effectiveLine);
     const words: WordCells[] = [];
     for (const tk of tokens) {
       const wc = convertWord(tk.text, tk.type, effective, uncertain);
@@ -274,7 +281,12 @@ export function convertText(raw: string, opts: ConvertOptions): ConvertResult {
       wordId++;
       words.push(wc);
     }
-    paragraphs.push({ words, blank: false });
+    paragraphs.push({
+      words,
+      blank: false,
+      ...(headingInfo ? { heading: { level: headingInfo.level, index: headingIndex, title: headingInfo.title } } : {}),
+    });
+    if (headingInfo) headingIndex++;
   }
   // 同一字符只提示一次（首个出现位置）
   const deduped: UncertainItem[] = [];
