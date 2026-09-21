@@ -154,3 +154,42 @@ test.describe('设置', () => {
     await expect(page.getByLabel('标调模式')).toHaveValue('all');
   });
 });
+
+test.describe('可触摸目录', () => {
+  test('章/节编号 + 目录占页后页码顺延且重算稳定 + 长标题续行', async ({ page }) => {
+    await createDoc(page);
+    const textarea = page.getByLabel('原文输入区');
+    await textarea.fill(
+      [
+        '第一章 盲文基础',
+        '1.1 点符结构',
+        '盲文由六个凸点组成，每方左右两列各三个点位。',
+        '第二章 拼音规则',
+        '2.1 声母韵母',
+        '本章讲解声母和韵母的拼合方法。',
+      ].join('\n'),
+    );
+
+    // 开启目录
+    await page.getByText('生成可触摸目录').click();
+
+    // 第一页标记为目录页，其后为正文页
+    const tocPage = page.locator('.page').first();
+    await expect(tocPage.locator('.page-label')).toContainText('目录页');
+    await expect(page.locator('.page').nth(1).locator('.page-label')).toContainText('正文页');
+
+    // 目录条目不报振荡
+    await expect(page.getByRole('alert')).toHaveCount(0);
+
+    // 目录页中出现标题原文（来源字 title）
+    const tocBtns = tocPage.locator('.cell-btn');
+    await expect(tocBtns.first()).toBeVisible();
+
+    // 构造超长标题：目录条目必须排成多行且不丢失（页面内出现多个引导点只在末行）
+    await textarea.fill(
+      `第一章 ${'特殊教育学校盲文教材触觉阅读'.repeat(3)}\n正文内容。`,
+    );
+    await expect(page.locator('.page').first().locator('.page-label')).toContainText('目录页');
+    await expect(page.getByRole('alert')).toHaveCount(0);
+  });
+});

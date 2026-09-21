@@ -21,9 +21,9 @@ const KIND_NAME: Record<string, string> = {
 /** 单页点阵预览：逐方可点击；页在屏外时浏览器跳过渲染（content-visibility） */
 export default function PageView({ page, setup, selected, onCellClick }: Props) {
   return (
-    <section className="page" aria-label={`第 ${page.number} 页`}>
+    <section className="page" aria-label={`${page.role === 'toc' ? '目录' : '正文'}第 ${page.number} 页`}>
       <div className="page-label">
-        第 {page.number} 页 · {setup.cellsPerLine} 方 × {setup.linesPerPage} 行
+        {page.role === 'toc' ? '目录页' : '正文页'} · 第 {page.number} 页 · {setup.cellsPerLine} 方 × {setup.linesPerPage} 行
       </div>
       {page.lines.map((line, li) => (
         <div className="line" key={li} role="row" aria-label={`第 ${li + 1} 行`}>

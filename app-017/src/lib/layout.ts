@@ -5,18 +5,26 @@
  * - 词不跨行（只在词边界换行），数字/字母串不可分割；
  * - 段首缩进 2 方；空行分段；页码（盲文数字）位于每页第一行右端；
  * - 超过整行宽度的词强制拆分并标记违规，绝不静默。
+ *
+ * 另供目录（toc.ts）复用的两个原语：
+ * - collectLines：段落 → 行序列，并标出每段起始行（目录需要按段定位标题）；
+ * - paginateLines：行序列 → 页，可指定起始物理页号（目录占页后正文页号顺延）。
  */
 import digitsJson from '../rules/zh-digits.json';
 import type { BrailleCell, PageSetup } from '../types';
-import type { ParagraphResult } from './convert';
+import type { ParagraphResult, WordCells } from './convert';
 
 export interface LayoutLine {
   cells: BrailleCell[];
+  /** 该行是某个段落（含空段）的起始行 */
+  paraStart?: boolean;
 }
 
 export interface LayoutPage {
   number: number;
   lines: LayoutLine[];
+  /** 目录页标记（正文页无此字段） */
+  role?: 'toc';
 }
 
 export interface LayoutViolation {
@@ -28,6 +36,43 @@ export interface LayoutViolation {
 export interface LayoutResult {
   pages: LayoutPage[];
   violations: LayoutViolation[];
+  /** 目录信息（未启用目录或无标题时为 null） */
+  toc: TableOfContents | null;
+}
+
+/** 目录条目（目录页排版结果，供界面/测试使用） */
+export interface TocEntry {
+  /** 出现先后序号（从 1 开始） */
+  ordinal: number;
+  /** 章节级别：chapter=章/单元，section=节 */
+  level: 'chapter' | 'section';
+  /** 标题原文 */
+  title: string;
+  /** 该标题正文起始页的物理页号（盲文页码的数字含义） */
+  page: number;
+  /** 条目占用的目录行（0=目录首页第一行内容行，不含页码行） */
+  lineStart: number;
+  lineEnd: number;
+}
+
+/** 页码迭代无法收敛时的抖动记录 */
+export interface TocOscillation {
+  ordinal: number;
+  title: string;
+  /** 历次迭代中该条目页码的取值序列（去重保序） */
+  pages: number[];
+}
+
+export interface TableOfContents {
+  entries: TocEntry[];
+  /** 目录占用的物理页数 */
+  pageCount: number;
+  /** 页码迭代轮数 */
+  iterations: number;
+  /** 达到不动点（目录页号与条目页码均不再变化） */
+  stable: boolean;
+  /** 未收敛时，哪些条目在哪些页码间来回跳 */
+  oscillations: TocOscillation[];
 }
 
 const PARAGRAPH_INDENT = 2;
@@ -38,7 +83,7 @@ const NUMBER_SIGN_DOTS = NUMBER_SIGN.split('').map(Number);
 const SPACE_CELL: BrailleCell = { dots: [], kind: 'space' };
 const INDENT_CELLS: BrailleCell[] = Array.from({ length: PARAGRAPH_INDENT }, () => ({ ...SPACE_CELL }));
 
-interface Group {
+export interface Group {
   cells: BrailleCell[];
   word: string;
   /** 组首段落缩进的方数（不计入违规词宽统计） */
@@ -46,7 +91,7 @@ interface Group {
 }
 
 /** 词序列 → 不可拆分组：标点并入前词（标点前不空方），其余词独立成组 */
-function buildGroups(paragraph: ParagraphResult): Group[] {
+export function buildGroups(paragraph: { words: WordCells[] }): Group[] {
   const groups: Group[] = [];
   for (const w of paragraph.words) {
     if (w.cells.length === 0) continue;
@@ -99,7 +144,7 @@ class LineWriter {
 }
 
 /** 盲文页码行：数符 + 数字方，右对齐（页码独占每页第一行） */
-function pageNumberLine(n: number, width: number): LayoutLine {
+export function pageNumberLine(n: number, width: number): LayoutLine {
   const cells: BrailleCell[] = [{ dots: [...NUMBER_SIGN_DOTS], kind: 'prefix', source: String(n) }];
   for (const ch of String(n)) {
     const d = DIGITS[ch];
@@ -111,17 +156,32 @@ function pageNumberLine(n: number, width: number): LayoutLine {
   return { cells: line };
 }
 
-/** 段落序列 → 分页排版结果 */
-export function layoutDocument(
-  paragraphs: ParagraphResult[],
-  setup: PageSetup,
-  showPageNumbers: boolean,
-): LayoutResult {
+/** 数符 + 一串十进制数字 → 盲文方（目录序号/页码共用） */
+export function brailleNumberCells(n: number, kind: BrailleCell['kind'] = 'digit'): BrailleCell[] {
+  const cells: BrailleCell[] = [{ dots: [...NUMBER_SIGN_DOTS], kind: 'prefix', source: String(n) }];
+  for (const ch of String(n)) {
+    cells.push({ dots: DIGITS[ch].split('').map(Number), kind, source: ch });
+  }
+  return cells;
+}
+
+export interface CollectedLines {
+  lines: LayoutLine[];
+  /** 每个原始段落（含空段）的起始行下标；-1 表示无可放置行（不会出现，保留语义） */
+  paraStartLines: number[];
+  violations: LayoutViolation[];
+}
+
+/** 段落序列 → 行序列（不跨页），同时记录每段起始行 */
+export function collectLines(paragraphs: ParagraphResult[], setup: PageSetup): CollectedLines {
   const writer = new LineWriter(setup.cellsPerLine);
   const violations: LayoutViolation[] = [];
+  const paraStartLines: number[] = [];
 
   for (const p of paragraphs) {
     writer.breakBefore();
+    const startLine = writer.lines.length;
+    paraStartLines.push(startLine);
     if (p.blank) {
       writer.lines.push([]);
       continue;
@@ -136,20 +196,44 @@ export function layoutDocument(
   }
   writer.finish();
 
-  const contentLines = writer.lines.length > 0 ? writer.lines : [[]];
+  const lines: LayoutLine[] = (writer.lines.length > 0 ? writer.lines : [[]]).map((cells) => ({ cells }));
+  for (const start of paraStartLines) {
+    if (start >= 0 && lines[start]) lines[start].paraStart = true;
+  }
+  return { lines, paraStartLines, violations };
+}
+
+/** 行序列 → 分页（纯机械切分；不改动行内容） */
+export function paginateLines(
+  contentLines: LayoutLine[],
+  setup: PageSetup,
+  showPageNumbers: boolean,
+  startPageNum = 1,
+): LayoutPage[] {
   const pages: LayoutPage[] = [];
   const contentPerPage = showPageNumbers ? Math.max(1, setup.linesPerPage - 1) : setup.linesPerPage;
 
-  let pageNum = 1;
+  let pageNum = startPageNum;
   let i = 0;
   while (i < contentLines.length) {
     const chunk = contentLines.slice(i, i + contentPerPage);
     const page: LayoutPage = { number: pageNum, lines: [] };
     if (showPageNumbers) page.lines.push(pageNumberLine(pageNum, setup.cellsPerLine));
-    for (const l of chunk) page.lines.push({ cells: l });
+    for (const l of chunk) page.lines.push(l);
     pages.push(page);
     i += chunk.length;
     pageNum++;
   }
-  return { pages, violations };
+  return pages;
+}
+
+/** 段落序列 → 分页排版结果（不插目录；目录见 toc.ts layoutWithToc） */
+export function layoutDocument(
+  paragraphs: ParagraphResult[],
+  setup: PageSetup,
+  showPageNumbers: boolean,
+): LayoutResult {
+  const { lines, violations } = collectLines(paragraphs, setup);
+  const pages = paginateLines(lines, setup, showPageNumbers, 1);
+  return { pages, violations, toc: null };
 }

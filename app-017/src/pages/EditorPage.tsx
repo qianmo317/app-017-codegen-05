@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BrailleCell, Doc } from '../types';
 import { convertText } from '../lib/convert';
 import { layoutDocument } from '../lib/layout';
+import { layoutWithToc } from '../lib/toc';
 import { getDoc, saveDoc } from '../lib/storage';
 import { useSettings } from '../App';
 import { navigate } from '../router';
@@ -76,8 +77,13 @@ export default function EditorPage({ id }: { id: string }) {
     [doc?.raw, convertOptions],
   );
   const layout = useMemo(
-    () => (converted && doc ? layoutDocument(converted.paragraphs, doc.setup, settings.showPageNumbers) : null),
-    [converted, doc?.setup, settings.showPageNumbers],
+    () =>
+      converted && doc
+        ? settings.showToc
+          ? layoutWithToc(converted, doc.raw, doc.setup, settings.showPageNumbers, convertOptions)
+          : layoutDocument(converted.paragraphs, doc.setup, settings.showPageNumbers)
+        : null,
+    [converted, doc?.raw, doc?.setup, settings.showPageNumbers, settings.showToc, convertOptions],
   );
 
   // 预览行号反查：选中格 → 原字符
@@ -186,6 +192,18 @@ export default function EditorPage({ id }: { id: string }) {
               {layout.violations.map((v, i) => (
                 <p className="violation-item" key={i}>
                   ⚠ 词「{v.word}」长 {v.cells} 方，超过行宽 {doc.setup.cellsPerLine}，已强制拆分——请修改或加宽行宽。
+                </p>
+              ))}
+            </div>
+          )}
+          {layout.toc && !layout.toc.stable && (
+            <div role="alert">
+              <p className="violation-item">
+                ⚠ 目录页码未能稳定（迭代 {layout.toc.iterations} 轮仍在变化），下列条目的页码在两个版本间来回跳：
+              </p>
+              {layout.toc.oscillations.map((o) => (
+                <p className="violation-item" key={o.ordinal}>
+                  · 第 {o.ordinal} 条「{o.title}」页码在 {o.pages.join(' ↔ ')} 页之间振荡
                 </p>
               ))}
             </div>
@@ -362,6 +380,14 @@ export default function EditorPage({ id }: { id: string }) {
                 onChange={(e) => update({ showPageNumbers: e.target.checked })}
               />{' '}
               显示盲文页码
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={settings.showToc}
+                onChange={(e) => update({ showToc: e.target.checked })}
+              />{' '}
+              生成可触摸目录（章/节标题 + 盲文页码，自动重算到稳定）
             </label>
           </div>
         </section>

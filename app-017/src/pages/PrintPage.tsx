@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { Doc } from '../types';
 import { convertText } from '../lib/convert';
 import { layoutDocument } from '../lib/layout';
+import { layoutWithToc } from '../lib/toc';
 import { pagesToBRF, validateBRF } from '../lib/brf';
 import { pageToSVG, calibrationSVG } from '../lib/svg';
 import { svgToPngBlob, downloadBlob, downloadText } from '../lib/png';
@@ -28,19 +29,22 @@ export default function PrintPage({ id }: { id: string }) {
   const pages = useMemo(() => {
     if (!doc) return null;
     // 与编辑器一致：使用文档的读音覆盖/确认记录与页面设置，避免打印页重新出现未确认项
-    const conv = convertText(doc.raw, {
+    const options = {
       toneMode: settings.toneMode,
       autoDetectPinyin: settings.autoDetectPinyin,
       profile: doc.ruleProfile,
       overrides: doc.overrides,
       confirmed: doc.confirmed,
       dictEntries: settings.dictEntries,
-    });
+    };
+    const conv = convertText(doc.raw, options);
     return {
       conv,
-      layout: layoutDocument(conv.paragraphs, doc.setup, settings.showPageNumbers),
+      layout: settings.showToc
+        ? layoutWithToc(conv, doc.raw, doc.setup, settings.showPageNumbers, options)
+        : layoutDocument(conv.paragraphs, doc.setup, settings.showPageNumbers),
     };
-  }, [doc, settings.toneMode, settings.autoDetectPinyin, settings.showPageNumbers, settings.dictEntries]);
+  }, [doc, settings.toneMode, settings.autoDetectPinyin, settings.showPageNumbers, settings.showToc, settings.dictEntries]);
 
   const svgs = useMemo(
     () => (pages && doc ? pages.layout.pages.map((p) => pageToSVG(p, doc.setup, settings.printer)) : []),
@@ -119,6 +123,19 @@ export default function PrintPage({ id }: { id: string }) {
         打印提示：请务必在打印对话框选择「实际大小 / 100%」，任何缩放都会改变点距导致无法触摸阅读。
         打印后可用校准页量测：横向 10 方 ≈ {(9 * settings.printer.cellPitchMm + settings.printer.dotPitchMm).toFixed(1)}mm。
       </p>
+
+      {pages.layout.toc && !pages.layout.toc.stable && (
+        <div role="alert" className="no-print">
+          <p className="violation-item">
+            ⚠ 目录页码未能稳定（迭代 {pages.layout.toc.iterations} 轮），下列条目页码来回跳，导出前请调整纸张/标题长度：
+          </p>
+          {pages.layout.toc.oscillations.map((o) => (
+            <p className="violation-item" key={o.ordinal}>
+              · 第 {o.ordinal} 条「{o.title}」页码在 {o.pages.join(' ↔ ')} 页之间振荡
+            </p>
+          ))}
+        </div>
+      )}
 
       {withCalibration && (
         <div
